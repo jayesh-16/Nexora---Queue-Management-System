@@ -1,0 +1,218 @@
+"use client";
+
+import { useEffect, useState, Suspense } from "react";
+import { useRouter } from "next/navigation";
+import { supabase, getQueueStats } from "@/lib/supabase";
+import type { Session } from "@/lib/supabase";
+import { PageHeader } from "@/components/page-header";
+
+type PageState = "loading" | "ready" | "offline" | "error" | "generating";
+
+function JoinPageContent() {
+  const router = useRouter();
+
+  const [pageState, setPageState] = useState<PageState>("loading");
+  const [session, setSession] = useState<Session | null>(null);
+  const [nowServing, setNowServing] = useState(0);
+  const [waitingCount, setWaitingCount] = useState(0);
+  const [errorMsg, setErrorMsg] = useState("");
+
+  useEffect(() => {
+    async function loadActiveSession() {
+      try {
+        // Find the one active operator session
+        const { data: sess, error } = await supabase
+          .from("sessions")
+          .select("*")
+          .eq("is_active", true)
+          .order("started_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        if (error) throw error;
+
+        if (!sess) {
+          setPageState("offline");
+          return;
+        }
+
+        setSession(sess);
+
+        // Fetch basic stats so customer knows the line length
+        const stats = await getQueueStats(sess.id);
+        setNowServing(stats.nowServing);
+        setWaitingCount(stats.waitingCount);
+
+        setPageState("ready");
+      } catch (err) {
+        console.error("[Join] Error:", err);
+        setErrorMsg("Failed to connect to the queue system.");
+        setPageState("error");
+      }
+    }
+
+    loadActiveSession();
+  }, []);
+
+  const handleGenerateToken = async () => {
+    if (!session) return;
+    setPageState("generating");
+
+    try {
+      // 1. Increment the session counter atomically
+      const { data: updatedSession, error: counterError } = await supabase
+        .from("sessions")
+        .update({ token_counter: session.token_counter + 1 })
+        .eq("id", session.id)
+        .select("token_counter")
+        .single();
+
+      if (counterError) throw counterError;
+
+      // 2. Insert new token
+      const { error: insertError } = await supabase.from("queue_tokens").insert({
+        session_id: session.id,
+        token_number: updatedSession.token_counter,
+        status: "waiting",
+      });
+
+      if (insertError) throw insertError;
+
+      // 3. Immediately redirect customer to their personal live tracking page
+      router.push(`/track?token=${updatedSession.token_counter}&session=${session.id}`);
+
+    } catch (err) {
+      console.error("[Token Gen] Error:", err);
+      setErrorMsg("Could not generate token. Please try again.");
+      setPageState("error");
+    }
+  };
+
+  if (pageState === "loading") {
+    return (
+      <main className="relative min-h-screen bg-background">
+        <div className="grid-bg fixed inset-0 opacity-30" aria-hidden="true" />
+        <div className="relative z-10">
+          <PageHeader label="Join Queue" title="NEXORA" links={[{ href: "/", label: "Home" }]} />
+          <div className="flex items-center justify-center min-h-[calc(100vh-120px)]">
+            <p className="font-mono text-xs text-muted-foreground animate-pulse tracking-widest uppercase">Connecting to Counter...</p>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  if (pageState === "offline") {
+    return (
+      <main className="relative min-h-screen bg-background flex flex-col">
+        <div className="grid-bg fixed inset-0 opacity-30" aria-hidden="true" />
+        <div className="relative z-10 flex-1 flex flex-col">
+          <PageHeader label="Join Queue" title="NEXORA" links={[{ href: "/", label: "Home" }]} />
+          <div className="flex flex-1 items-center justify-center px-4">
+            <div className="w-full max-w-sm border border-border/40 p-8 text-center bg-secondary/5">
+              <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground mb-4">Unavailable</p>
+              <h2 className="font-[var(--font-bebas)] text-3xl tracking-tight mb-2">QUEUE OFFLINE</h2>
+              <p className="font-mono text-xs text-muted-foreground mb-8">
+                The operator has not opened the counter yet. Please wait.
+              </p>
+            </div>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  if (pageState === "error") {
+    return (
+      <main className="relative min-h-screen bg-background flex flex-col">
+        <div className="grid-bg fixed inset-0 opacity-30" aria-hidden="true" />
+        <div className="relative z-10 flex-1 flex flex-col">
+          <PageHeader label="Join Queue" title="NEXORA" links={[{ href: "/", label: "Home" }]} />
+          <div className="flex flex-1 items-center justify-center px-4">
+            <div className="w-full max-w-sm border border-red-900/40 p-8 text-center bg-red-950/10">
+               <p className="font-[var(--font-bebas)] text-3xl text-red-500 tracking-tight mb-4">Error</p>
+               <p className="font-mono text-xs text-red-400 mb-6">{errorMsg}</p>
+               <button onClick={() => window.location.reload()} className="border border-red-500/30 text-red-400 px-4 py-2 font-mono text-[10px] uppercase tracking-widest hover:bg-red-500/10">
+                 Retry Connection
+               </button>
+            </div>
+          </div>
+        </div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="relative min-h-[100dvh] bg-background flex flex-col">
+      <div className="grid-bg fixed inset-0 opacity-30" aria-hidden="true" />
+      <div className="relative z-10 flex flex-col flex-1">
+        <PageHeader label="Join Queue" title="NEXORA" links={[{ href: "/", label: "Home" }]} />
+
+        <div className="flex flex-1 items-center justify-center px-4 sm:px-6 py-8">
+          <div className="w-full max-w-md flex flex-col space-y-4">
+            
+            {/* Header info */}
+            <div className="border border-border/40 p-8 bg-secondary/5 text-center">
+              <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground mb-4">
+                You are joining
+              </p>
+              <h1 className="font-[var(--font-bebas)] text-5xl tracking-tight text-foreground leading-none mb-1">
+                {session?.name}
+              </h1>
+              <p className="font-mono text-sm text-accent">{session?.category}</p>
+            </div>
+
+            {/* Quick stats */}
+            <div className="grid grid-cols-2 gap-px bg-border/40">
+              <div className="bg-background p-6 text-center">
+                <p className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground mb-2">
+                  Now Serving
+                </p>
+                <p className="font-[var(--font-bebas)] text-3xl tracking-tight text-accent">
+                   #{nowServing}
+                </p>
+              </div>
+              <div className="bg-background p-6 text-center">
+                <p className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground mb-2">
+                  Current Wait
+                </p>
+                <p className="font-[var(--font-bebas)] text-3xl tracking-tight text-foreground">
+                   {waitingCount} <span className="text-xl">ppl</span>
+                </p>
+              </div>
+            </div>
+
+            {/* CTA Button */}
+            <button
+              onClick={handleGenerateToken}
+              disabled={pageState === "generating"}
+              className={`w-full py-6 px-4 border border-accent text-accent uppercase font-mono text-sm tracking-widest
+                          flex items-center justify-center gap-3 transition-all duration-200 cursor-pointer
+                         ${pageState === "generating" ? "opacity-50 cursor-not-allowed" : "hover:bg-accent hover:text-accent-foreground shadow-[0_0_15px_rgba(255,100,0,0.2)]"}`}
+            >
+              {pageState === "generating" ? (
+                <>
+                  <span className="w-4 h-4 border-2 border-accent/30 border-t-accent rounded-full animate-spin" />
+                  Generating Token...
+                </>
+              ) : (
+                "Generate My Token →"
+              )}
+            </button>
+            <p className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground/50 text-center pt-2">
+              Please be near the premise before joining
+            </p>
+          </div>
+        </div>
+      </div>
+    </main>
+  );
+}
+
+export default function JoinPage() {
+  return (
+    <Suspense fallback={<div className="h-screen bg-background" />}>
+      <JoinPageContent />
+    </Suspense>
+  );
+}

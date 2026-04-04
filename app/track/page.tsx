@@ -1,20 +1,26 @@
 "use client";
 
 import { useEffect, useState, useCallback, useRef, Suspense } from "react";
-import { useSearchParams } from "next/navigation";
-import { getQueueStats, getSession, subscribeToTokenChanges } from "@/lib/supabase";
-import type { Session } from "@/lib/supabase";
+import { useSearchParams, useRouter } from "next/navigation";
+import { supabase, getQueueStats, getSession, subscribeToTokenChanges } from "@/lib/supabase";
+import type { Session, QueueToken } from "@/lib/supabase";
 import TurnAlert from "@/components/TurnAlert";
 import OfflineBanner from "@/components/OfflineBanner";
 import Link from "next/link";
 import { PageHeader } from "@/components/page-header";
+import { mqttSubscribe } from "@/lib/mqtt";
 
 function TrackPageContent() {
   const searchParams = useSearchParams();
-  const tokenNumber = Number(searchParams.get("token")) || 0;
-  const sessionId = searchParams.get("session") || "";
+  const router = useRouter();
+  
+  const tokenUid = searchParams.get("uid");
+  const urlTokenNumber = Number(searchParams.get("token")) || 0;
+  const urlSessionId = searchParams.get("session") || "";
 
   const [session, setSession] = useState<Session | null>(null);
+  const [tokenNumber, setTokenNumber] = useState<number>(urlTokenNumber);
+  const [sessionId, setSessionId] = useState<string>(urlSessionId);
   const [nowServing, setNowServing] = useState(0);
   const [avgWait, setAvgWait] = useState(0);
   const [isConnected, setIsConnected] = useState(true);
@@ -24,32 +30,76 @@ function TrackPageContent() {
   const prevAhead = useRef<number>(999);
 
   const loadData = useCallback(async () => {
-    if (!sessionId) return;
+    let activeSessionId = sessionId;
+    let activeTokenNum = tokenNumber;
+
+    if (tokenUid) {
+       // Deep secure resolution via random UUID 
+       const { data: exactToken } = await supabase.from("queue_tokens").select("*").eq("id", tokenUid).single();
+       if (exactToken) {
+           activeSessionId = exactToken.session_id;
+           activeTokenNum = exactToken.token_number;
+           if (!sessionId) {
+              setSessionId(activeSessionId);
+              setTokenNumber(activeTokenNum);
+           }
+       }
+    }
+
+    if (!activeSessionId) return;
+
     try {
-      const [sess, stats] = await Promise.all([getSession(sessionId), getQueueStats(sessionId)]);
+      const [sess, stats] = await Promise.all([getSession(activeSessionId), getQueueStats(activeSessionId)]);
       setSession(sess);
       setNowServing(stats.nowServing);
       setAvgWait(stats.avgWaitMins);
       setLastUpdated(new Date());
       setIsConnected(true);
-      const currentAhead = tokenNumber - stats.nowServing;
-      if (currentAhead <= 0 && prevAhead.current > 0) setShowTurnAlert(true);
+      const currentAhead = activeTokenNum - stats.nowServing;
+      if (currentAhead <= 0 && prevAhead.current > 0) {
+         setShowTurnAlert(true);
+         
+         // Trigger Whatsapp-style native OS dropdown notification
+         if ("Notification" in window && Notification.permission === "granted") {
+            try {
+               new Notification("NEXORA - It's your turn! \u2705", {
+                  body: `Token #${activeTokenNum} is now being served. Please proceed to the counter immediately.`,
+                  vibrate: [200, 100, 200, 100, 200],
+               } as any);
+            } catch(e) {
+               // iOS Safari requires ServiceWorker registration to trigger notifications in some cases
+               navigator.serviceWorker.ready.then(r => r.showNotification("NEXORA - It's your turn!", { body: `Token #${activeTokenNum} is now being served.`})).catch(() => {});
+            }
+         }
+      }
       prevAhead.current = currentAhead;
     } catch {
       setIsConnected(false);
     }
-  }, [sessionId, tokenNumber]);
+  }, [sessionId, tokenNumber, tokenUid]);
 
   useEffect(() => {
     loadData();
     if (!sessionId) return;
     const unsub = subscribeToTokenChanges(sessionId, loadData);
+    const unsubMqttC = mqttSubscribe("nexora/site01/queue/current", (p: any) => { 
+      if (typeof p.current === "number") {
+         setNowServing(p.current);
+         // Alert logic here if needed, but loadData handles it natively on Supabase event anyway.
+      }
+    });
+    
     const interval = setInterval(loadData, 10000);
-    return () => { unsub(); clearInterval(interval); };
+    return () => { unsub(); unsubMqttC(); clearInterval(interval); };
   }, [loadData, sessionId]);
 
   useEffect(() => {
     if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+    
+    // Prompt for WhatsApp-style push notifications
+    if ("Notification" in window && Notification.permission === "default") {
+        Notification.requestPermission().catch(() => {});
+    }
   }, []);
 
   const ahead = Math.max(0, tokenNumber - nowServing);

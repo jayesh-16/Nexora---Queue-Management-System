@@ -2,7 +2,7 @@
 
 import { useEffect, useState, Suspense } from "react";
 import { useRouter } from "next/navigation";
-import { supabase, getQueueStats } from "@/lib/supabase";
+import { supabase, getQueueStats, subscribeToTokenChanges } from "@/lib/supabase";
 import type { Session } from "@/lib/supabase";
 import { PageHeader } from "@/components/page-header";
 import { mqttSubscribe, mqttPublish } from "@/lib/mqtt";
@@ -63,10 +63,29 @@ function JoinPageContent() {
       }
     });
 
+    // Zero-latency hardware UI sync
+    const unsubMqttC = mqttSubscribe("nexora/site01/queue/current", (p: any) => { if (typeof p.current === "number") setNowServing(p.current); });
+    const unsubMqttL = mqttSubscribe("nexora/site01/queue/length", (p: any) => { if (typeof p.length === "number") setWaitingCount(p.length); });
+
     return () => {
       unsubAuth();
+      unsubMqttC();
+      unsubMqttL();
     };
   }, []);
+
+  useEffect(() => {
+    if (!session?.id) return;
+    
+    // Supabase DB Realtime Fallback Sync
+    const unsubDb = subscribeToTokenChanges(session.id, async () => {
+       const stats = await getQueueStats(session.id);
+       setNowServing(stats.nowServing);
+       setWaitingCount(stats.waitingCount);
+    });
+    
+    return () => unsubDb();
+  }, [session?.id]);
 
   const handleGenerateToken = async () => {
     if (!session) return;
@@ -89,20 +108,28 @@ function JoinPageContent() {
 
       if (counterError) throw counterError;
 
-      // 2. Insert new token
-      const { error: insertError } = await supabase.from("queue_tokens").insert({
+      // 2. Insert new token and return its unique UUID track code
+      const { data: newTokens, error: insertError } = await supabase.from("queue_tokens").insert({
         session_id: session.id,
         token_number: updatedSession.token_counter,
         status: "waiting",
-      });
+      }).select("id");
 
       if (insertError) throw insertError;
+      const uniqueUid = newTokens?.[0]?.id;
 
       // 3. Notify the hardware boxes to update their "Queue Length" visual UI
       mqttPublish("nexora/site01/token/request", { token: updatedSession.token_counter });
 
-      // 4. Immediately redirect customer to their personal live tracking page
-      router.push(`/track?token=${updatedSession.token_counter}&session=${session.id}`);
+      // 4. Force Kiosk auth code to rotate instantly. This single-use OTP behavior prevents code reuse.
+      mqttPublish("nexora/site01/kiosk/rotate", { timestamp: Date.now() });
+
+      // 5. Immediately redirect customer to their personal live tracking page uniquely verified by DB UUID
+      if (uniqueUid) {
+         router.push(`/track?token=${updatedSession.token_counter}&session=${session.id}&uid=${uniqueUid}`);
+      } else {
+         router.push(`/track?token=${updatedSession.token_counter}&session=${session.id}`);
+      }
 
     } catch (err) {
       console.error("[Token Gen] Error:", err);

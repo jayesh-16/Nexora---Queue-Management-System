@@ -6,6 +6,7 @@ import type { Session } from "@/lib/supabase";
 import OfflineBanner from "@/components/OfflineBanner";
 import Link from "next/link";
 import { PageHeader } from "@/components/page-header";
+import { mqttSubscribe } from "@/lib/mqtt";
 
 function StatusPageContent() {
   const [session, setSession] = useState<Session | null>(null);
@@ -56,13 +57,19 @@ function StatusPageContent() {
     if (!session?.id) return;
     
     // Subscribe to DB real-time changes
-    const unsub = subscribeToTokenChanges(session.id, () => loadData(session.id));
+    const unsubDb = subscribeToTokenChanges(session.id, () => loadData(session.id));
     
+    // Subscribe natively to hardware for instant 0-latency updates
+    const unsubMqttC = mqttSubscribe("nexora/site01/queue/current", (p: any) => { if (typeof p.current === "number") setNowServing(p.current); });
+    const unsubMqttL = mqttSubscribe("nexora/site01/queue/length", (p: any) => { if (typeof p.length === "number") setWaitingCount(p.length); });
+
     // Fallback polling
     const interval = setInterval(() => loadData(session.id), 10000);
     
     return () => { 
-      unsub(); 
+      unsubDb(); 
+      unsubMqttC();
+      unsubMqttL();
       clearInterval(interval); 
     };
   }, [loadData, session?.id]);

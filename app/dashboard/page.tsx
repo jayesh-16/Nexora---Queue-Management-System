@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { supabase, getQueueStats, subscribeToTokenChanges } from "@/lib/supabase";
 import { mqttSubscribe, mqttPublish } from "@/lib/mqtt";
 import QueueList from "@/components/QueueList";
@@ -24,6 +24,7 @@ export default function DashboardPage() {
   const [showEndConfirm, setShowEndConfirm] = useState(false);
   const [endPin, setEndPin] = useState("");
   const [endError, setEndError] = useState("");
+  const nowServingRef = useRef(0);
 
   const loadSession = useCallback(async () => {
     const { data } = await supabase
@@ -42,6 +43,7 @@ export default function DashboardPage() {
         .order("token_number", { ascending: false }).then((r) => r.data ?? []),
     ]);
     setStats(statsData);
+    nowServingRef.current = statsData.nowServing;
     setTokens(tokensData as QueueItem[]);
   }, [session?.id]);
 
@@ -57,8 +59,10 @@ export default function DashboardPage() {
     // The web app acts as the bridge connecting the MQTT hardware action to the Supabase database.
     const unsubMqtt = mqttSubscribe("nexora/site01/queue/current", (payload: any) => {
       if (payload && typeof payload.current === "number") {
-         console.log("[Hardware] Next button pressed on Box 1. Advancing database...");
-         handleCallNext();
+         if (payload.current > nowServingRef.current) {
+             console.log("[Hardware] Next button physically pressed on Box 1. Advancing database...");
+             handleCallNext();
+         }
       }
     });
 

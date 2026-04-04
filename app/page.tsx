@@ -11,12 +11,12 @@ export default function Page() {
       <SideNav />
       <div className="grid-bg fixed inset-0 opacity-30" aria-hidden="true" />
 
-      {/* Demo Link - Top Right */}
+      {/* Operator Login - Top Right */}
       <a
-        href="/scan"
-        className="fixed top-6 right-6 z-40 font-mono text-xs uppercase tracking-widest text-accent hover:text-accent/80 transition-colors border border-accent/40 hover:border-accent px-4 py-2 bg-background/50 backdrop-blur-sm"
+        href="/login"
+        className="fixed top-6 right-6 z-40 font-mono text-xs uppercase tracking-widest text-accent hover:text-accent/80 transition-colors border border-accent/40 hover:border-accent px-4 py-2 bg-background/50 backdrop-blur-sm shadow-[0_0_15px_rgba(255,100,0,0.1)] hover:shadow-[0_0_20px_rgba(255,100,0,0.2)]"
       >
-        Join Queue →
+        Operator Login
       </a>
 
       <div className="relative z-10">

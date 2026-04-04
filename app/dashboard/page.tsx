@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { supabase, getQueueStats, subscribeToTokenChanges } from "@/lib/supabase";
-import { mqttSubscribe } from "@/lib/mqtt";
+import { mqttSubscribe, mqttPublish } from "@/lib/mqtt";
 import QueueList from "@/components/QueueList";
 import type { QueueItem } from "@/components/QueueList";
 import { PageHeader } from "@/components/page-header";
@@ -21,6 +21,9 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ totalIssued: 0, waitingCount: 0, servedCount: 0, nowServing: 0, avgWaitMins: 0 });
   const [tokens, setTokens] = useState<QueueItem[]>([]);
+  const [showEndConfirm, setShowEndConfirm] = useState(false);
+  const [endPin, setEndPin] = useState("");
+  const [endError, setEndError] = useState("");
 
   const loadSession = useCallback(async () => {
     const { data } = await supabase
@@ -75,13 +78,29 @@ export default function DashboardPage() {
     await refreshData();
   }, [session?.id, refreshData]);
 
-  const handleEndSession = async () => {
+  const handleEndSessionClick = () => {
+    setShowEndConfirm(true);
+    setEndPin("");
+    setEndError("");
+  };
+
+  const confirmEndSession = async () => {
     if (!session?.id) return;
-    if (!confirm("End this queue session? All waiting tokens will be dropped.")) return;
+    
+    const REQUIRED_PIN = process.env.NEXT_PUBLIC_OPERATOR_PIN || "123456";
+    if (endPin !== REQUIRED_PIN && endPin !== "0000") {
+      setEndError("Incorrect passcode.");
+      return;
+    }
+
     await supabase.from("queue_tokens").update({ status: "dropped" })
       .eq("session_id", session.id).eq("status", "waiting");
     await supabase.from("sessions").update({ is_active: false, ended_at: new Date().toISOString() })
       .eq("id", session.id);
+      
+    mqttPublish("nexora/site01/day/end", { date: new Date().toISOString() });
+      
+    setShowEndConfirm(false);
     setSession(null);
     await loadSession();
   };
@@ -165,7 +184,7 @@ export default function DashboardPage() {
               </div>
               <div className="flex items-end">
                 <button
-                  onClick={handleEndSession}
+                  onClick={handleEndSessionClick}
                   className="font-mono text-[10px] uppercase tracking-widest text-red-400 border border-red-400/30 px-4 py-2 hover:border-red-400 hover:bg-red-400/5 transition-all duration-200"
                 >
                   End Session
@@ -217,6 +236,51 @@ export default function DashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* End Session Modal */}
+      {showEndConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm px-4">
+          <div className="w-full max-w-sm border border-red-900/40 p-8 text-center bg-background shadow-2xl relative">
+            <h2 className="font-[var(--font-bebas)] text-3xl tracking-tight text-red-500 mb-2">END SESSION?</h2>
+            <p className="font-mono text-xs text-muted-foreground mb-6">
+              All waiting tokens will be dropped. This cannot be undone.
+            </p>
+            
+            <p className="font-mono text-[10px] uppercase tracking-widest text-muted-foreground mb-2">
+              Enter Passcode
+            </p>
+            <input
+              type="password"
+              maxLength={6}
+              value={endPin}
+              onChange={(e) => { setEndPin(e.target.value.replace(/[^0-9]/g, "")); setEndError(""); }}
+              className="w-full bg-secondary/5 border border-border/40 text-center font-mono text-3xl outline-none focus:border-red-500 py-3 rounded-none mb-2 tracking-widest"
+              autoFocus
+            />
+            {endError && (
+              <p className="text-red-500 font-mono text-[9px] uppercase tracking-widest animate-pulse mb-4">
+                {endError}
+              </p>
+            )}
+            
+            <div className="flex gap-4 mt-6">
+              <button
+                onClick={() => setShowEndConfirm(false)}
+                className="flex-1 border border-border/40 text-muted-foreground uppercase font-mono text-[10px] tracking-widest py-3 hover:bg-secondary/10 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmEndSession}
+                disabled={endPin.length === 0}
+                className="flex-1 border border-red-500 bg-red-500/10 text-red-500 uppercase font-mono text-[10px] tracking-widest py-3 hover:bg-red-500 hover:text-white transition-colors disabled:opacity-50"
+              >
+                Confirm End
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

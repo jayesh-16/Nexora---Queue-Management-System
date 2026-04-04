@@ -65,6 +65,10 @@ export default function NewSessionPage() {
         name: name.trim(), category, is_active: true, token_counter: 0, env: "production"
       });
       if (insertError) throw insertError;
+      
+      // Broadcast to hardware that a new session has started
+      mqttPublish("nexora/site01/day/start", { date: new Date().toISOString() });
+      
       router.push("/dashboard");
     } catch (err: unknown) {
       console.error("[Session Error]", err);

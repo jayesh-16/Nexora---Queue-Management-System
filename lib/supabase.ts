@@ -62,6 +62,20 @@ export async function getSession(sessionId: string): Promise<Session | null> {
   return data;
 }
 
+/** Get the current active session */
+export async function getActiveSession(): Promise<Session | null> {
+  const { data, error } = await supabase
+    .from("sessions")
+    .select("*")
+    .eq("is_active", true)
+    .order("started_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) return null;
+  return data;
+}
+
 /** Get the current "now serving" number for a session */
 export async function getNowServing(sessionId: string): Promise<number> {
   const { data } = await supabase

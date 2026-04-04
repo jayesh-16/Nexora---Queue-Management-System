@@ -64,8 +64,8 @@ function TrackPageContent() {
           <div className="w-full max-w-md border border-border/40 p-8 text-center">
             <p className="font-[var(--font-bebas)] text-3xl tracking-tight mb-4">Token Not Found</p>
             <p className="font-mono text-sm text-muted-foreground mb-8">This token may have already been served.</p>
-            <Link href="/scan" className="block font-mono text-xs uppercase tracking-widest border border-foreground/20 py-3 px-4 hover:border-accent hover:text-accent transition-all duration-200 text-center">
-              Scan Again
+            <Link href="/join" className="block font-mono text-xs uppercase tracking-widest border border-foreground/20 py-3 px-4 hover:border-accent hover:text-accent transition-all duration-200 text-center">
+              Join Again
             </Link>
           </div>
         </div>
@@ -101,7 +101,7 @@ function TrackPageContent() {
       <div className="relative z-10">
         {!isConnected && <OfflineBanner lastUpdated={lastUpdated} />}
 
-        <PageHeader label="Track Queue" title="LIVE POSITION" links={[{ href: "/scan", label: "Back" }]} />
+        <PageHeader label="Track Queue" title="LIVE POSITION" links={[{ href: "/join", label: "Back" }]} />
 
         <div className="flex items-center justify-center min-h-[calc(100vh-120px)] px-6 md:px-12 py-12">
           <div className="w-full max-w-2xl space-y-4">
